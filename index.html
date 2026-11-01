@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arcade Edu-Game Generator Pro</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React & ReactDOM CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  
+  <!-- Babel Standalone untuk JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- PDF.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  
+  <!-- Google Fonts Traditional Arabic & UI Fonts -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Scheherazade+New:wght@400;700&family=Noto+Naskh+Arabic:wght@400;600;700&family=Outfit:wght@400;600;800;900&display=swap">
+
+  <style>
+    body {
+      font-family: 'Outfit', sans-serif;
+    }
+    .arabic-text {
+      font-family: 'Traditional Arabic', 'Amiri', 'Noto Naskh Arabic', 'Scheherazade New', serif !important;
+      font-feature-settings: "rlig" 1, "calt" 1, "liga" 1;
+      direction: rtl;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+    }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-8px); }
+      40%, 80% { transform: translateX(8px); }
+    }
+    .animate-shake {
+      animation: shake 0.4s ease-in-out;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Konfigurasi Worker PDF.js
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+
+    // Cleaning string Arab agar harakat aman
+    const cleanArabicText = (text) => {
+      if (!text) return '';
+      return text
+        .replace(/[\r\n\t]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
+
+    const containsArabic = (str) => /[\u0600-\u06FF]/.test(str || '');
+
+    // Web Audio API Synthesizer
+    class SoundFX {
+      constructor() {
+        this.ctx = null;
+      }
+      init() {
+        if (!this.ctx) {
+          this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+      }
+      playCorrect() {
+        this.init();
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        [523.25, 659.25, 783.99, 1046.50].forEach((freq, idx) => {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+          gain.gain.setValueAtTime(0.25, now + idx * 0.08);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.25);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(now + idx * 0.08);
+          osc.stop(now + idx * 0.08 + 0.25);
+        });
+      }
+      playWrong() {
+        this.init();
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(220, now);
+        osc.frequency.linearRampToValueAtTime(110, now + 0.3);
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.35);
+      }
+    }
+
+    const sfx = new SoundFX();
+    const ARABIC_LABELS = ['أ', 'ب', 'ج', 'د', 'هـ'];
+
+    const PRESET_DATASETS = {
+      easy: {
+        title: "Tingkat Mudah (Easy)",
+        items: [
+          { type: "mc", q: "مَا هُوَ عَدَدُ أَرْكَانِ الإِسْلَامِ؟", options: ["خَمْسَةٌ", "أَرْبَعَةٌ", "سِتَّةٌ", "ثَلَاثَةٌ"], answer: "خَمْسَةٌ" },
+          { type: "tf", q: "السَّمَكُ يَعِيشُ فِي المَاءِ.", options: ["صَحِيح", "خَطَأ"], answer: "صَحِيح" },
+          { type: "mc", q: "Berapa hasil dari 7 + 8?", options: ["15", "14", "16", "13"], answer: "15" },
+          { type: "tf", q: "Ayam adalah hewan bertelur dan berkaki dua.", options: ["Benar", "Salah"], answer: "Benar" }
+        ]
+      },
+      medium: {
+        title: "Tingkat Sedang (Medium)",
+        items: [
+          { type: "mc", q: "مَنْ هُوَ خَاتَمُ الأَنْبِيَاءِ وَالمُرْسَلِينَ؟", options: ["مُحَمَّدٌ صَلَّى اللَّهُ عَلَيْهِ وَسَلَّمَ", "إِبْرَاهِيمُ عَلَيْهِ السَّلَامُ", "مُوسَى عَلَيْهِ السَّلَامُ", "عِيسَى عَلَيْهِ السَّلَامُ"], answer: "مُحَمَّدٌ صَلَّى اللَّهُ عَلَيْهِ وَسَلَّمَ" },
+          { type: "tf", q: "الصَّلَاةُ هِيَ الرُّكْنُ الثَّانِي مِنْ أَرْكَانِ الإِسْلَامِ.", options: ["صَحِيح", "خَطَأ"], answer: "صَحِيح" },
+          { type: "mc", q: "Jika 2x + 5 = 15, berapakah nilai x?", options: ["5", "4", "6", "10"], answer: "5" }
+        ]
+      },
+      hard: {
+        title: "Tingkat Sulit (Hard)",
+        items: [
+          { type: "mc", q: "كَمْ عَدَدُ سُوَرِ القُرْآنِ الكَرِيمِ؟", options: ["مِائَةٌ وَأَرْبَعَةَ عَشَرَ", "مِائَةٌ وَثَلَاثَةَ عَشَرَ", "مِائَةٌ وَخَمْسَةَ عَشَرَ", "مِائَةٌ وَعَشَرَةٌ"], answer: "مِائَةٌ وَأَرْبَعَةَ عَشَرَ" },
+          { type: "tf", q: "سُورَةُ البَقَرَةِ هِيَ أَطْوَلُ سُورَةٍ فِي القُرْآنِ الكَرِيمِ.", options: ["صَحِيح", "خَطَأ"], answer: "صَحِيح" }
+        ]
+      },
+      mix: {
+        title: "Tingkat Campuran (Mixed)",
+        items: [
+          { type: "mc", q: "مَا هُوَ عَدَدُ أَرْكَانِ الإِسْلَامِ؟", options: ["خَمْسَةٌ", "أَرْبَعَةٌ", "سِتَّةٌ", "ثَلَاثَةٌ"], answer: "خَمْسَةٌ" },
+          { type: "mc", q: "Berapa hasil dari 7 + 8?", options: ["15", "14", "16", "13"], answer: "15" },
+          { type: "tf", q: "الصَّلَاةُ هِيَ الرُّكْنُ الثَّانِي مِنْ أَرْكَانِ الإِسْلَامِ.", options: ["صَحِيح", "خَطَأ"], answer: "صَحِيح" }
+        ]
+      }
+    };
+
+    function App() {
+      const [difficulty, setDifficulty] = useState('mix');
+      const [lang, setLang] = useState('id');
+      const [questionTypeFilter, setQuestionTypeFilter] = useState('all');
+      const [questionLimit, setQuestionLimit] = useState(5);
+
+      const [questions, setQuestions] = useState(PRESET_DATASETS.mix.items);
+      const [datasetTitle, setDatasetTitle] = useState(PRESET_DATASETS.mix.title);
+
+      const [voiceEnabled, setVoiceEnabled] = useState(true);
+      const [autoRead, setAutoRead] = useState(true);
+      const [availableVoices, setAvailableVoices] = useState([]);
+      const [selectedVoiceURI, setSelectedVoiceURI] = useState('');
+      const [pitch, setPitch] = useState(1.0);
+      const [rate, setRate] = useState(1.0);
+      const [isSpeaking, setIsSpeaking] = useState(false);
+
+      const [isParsingPdf, setIsParsingPdf] = useState(false);
+      const [isAiProcessing, setIsAiProcessing] = useState(false);
+      const [jsonError, setJsonError] = useState('');
+
+      const [gameState, setGameState] = useState('setup');
+      const [activeSessionQuestions, setActiveSessionQuestions] = useState([]);
+      const [score, setScore] = useState(0);
+      const [combo, setCombo] = useState(0);
+      const [currentIdx, setCurrentIdx] = useState(0);
+      const [answerFeedback, setAnswerFeedback] = useState(null);
+
+      useEffect(() => {
+        const refreshVoices = () => {
+          if ('speechSynthesis' in window) {
+            const voices = window.speechSynthesis.getVoices();
+            setAvailableVoices(voices);
+            const match = voices.find(v => lang === 'ar' ? v.lang.includes('ar') : v.lang.includes('id'));
+            if (match) setSelectedVoiceURI(match.voiceURI);
+          }
+        };
+        refreshVoices();
+        if ('speechSynthesis' in window) {
+          window.speechSynthesis.onvoiceschanged = refreshVoices;
+        }
+      }, [lang]);
+
+      useEffect(() => {
+        if (PRESET_DATASETS[difficulty]) {
+          setQuestions(PRESET_DATASETS[difficulty].items);
+          setDatasetTitle(PRESET_DATASETS[difficulty].title);
+        }
+      }, [difficulty]);
+
+      const speakText = (text) => {
+        if (!voiceEnabled || !text || !('speechSynthesis' in window)) return;
+        window.speechSynthesis.cancel();
+        const cleanStr = cleanArabicText(text);
+        const utterance = new SpeechSynthesisUtterance(cleanStr);
+        let vObj = availableVoices.find(v => v.voiceURI === selectedVoiceURI);
+        if (vObj) utterance.voice = vObj;
+        utterance.lang = lang === 'ar' ? 'ar-SA' : 'id-ID';
+        utterance.pitch = pitch;
+        utterance.rate = rate;
+        utterance.onstart = () => setIsSpeaking(true);
+        utterance.onend = () => setIsSpeaking(false);
+        utterance.onerror = () => setIsSpeaking(false);
+        window.speechSynthesis.speak(utterance);
+      };
+
+      useEffect(() => {
+        if (gameState === 'playing' && autoRead && activeSessionQuestions[currentIdx]) {
+          speakText(activeSessionQuestions[currentIdx].q);
+        }
+      }, [currentIdx, gameState, autoRead]);
+
+      const generateQuestionsWithGemini = async (pdfText) => {
+        const systemPrompt = `You are an expert educator. Return ONLY a valid JSON array of quiz questions.
+Create ONLY Multiple Choice ('mc') and True/False ('tf') questions.
+CRITICAL: If Arabic, ALWAYS add full vowelfication/diacritics (Harakat / Tasykil كامل بالحركات) to all Arabic words in questions and options.`;
+
+        const userPrompt = `Buatkan 5 sampai 10 soal kuis (hanya Pilihan Ganda dan Benar/Salah) berdasarkan materi ini. Berikan HARAKAT LENGKAP jika berbahasa Arab:\n\n${pdfText.substring(0, 4000)}`;
+        const apiKey = "";
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+        const payload = {
+          contents: [{ parts: [{ text: userPrompt }] }],
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "ARRAY",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  type: { type: "STRING" },
+                  q: { type: "STRING" },
+                  options: { type: "ARRAY", items: { type: "STRING" } },
+                  answer: { type: "STRING" }
+                },
+                required: ["type", "q", "options", "answer"]
+              }
+            }
+          }
+        };
+
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+        const result = await response.json();
+        const jsonString = result.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!jsonString) return null;
+
+        const parsedArray = JSON.parse(jsonString);
+        return parsedArray.map(item => ({
+          type: item.type === 'tf' ? 'tf' : 'mc',
+          q: cleanArabicText(item.q),
+          options: (item.options || []).map(o => cleanArabicText(o)),
+          answer: cleanArabicText(item.answer)
+        }));
+      };
+
+      const handlePdfUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        setIsParsingPdf(true);
+        setJsonError('');
+
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          let fullText = '';
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const textContent = await page.getTextContent();
+            fullText += textContent.items.map(item => item.str).join(' ') + '\n';
+          }
+
+          const sanitizedText = cleanArabicText(fullText);
+          if (containsArabic(sanitizedText)) setLang('ar');
+
+          setIsAiProcessing(true);
+          const aiQuestions = await generateQuestionsWithGemini(sanitizedText);
+          if (aiQuestions && aiQuestions.length > 0) {
+            setQuestions(aiQuestions);
+            setDatasetTitle(`AI PDF: ${file.name}`);
+            alert(`✨ Berhasil membuat ${aiQuestions.length} soal dari PDF!`);
+          }
+        } catch (err) {
+          setJsonError(`Gagal membaca PDF: ${err.message}`);
+        } finally {
+          setIsParsingPdf(false);
+          setIsAiProcessing(false);
+        }
+      };
+
+      const startGame = () => {
+        let pool = [...questions];
+        if (questionTypeFilter !== 'all') {
+          pool = pool.filter(q => q.type === questionTypeFilter);
+        }
+        if (pool.length === 0) {
+          alert("Tidak ada soal yang cocok!");
+          return;
+        }
+        const limit = typeof questionLimit === 'number' ? questionLimit : pool.length;
+        const shuffled = pool.sort(() => 0.5 - Math.random()).slice(0, limit);
+        setActiveSessionQuestions(shuffled);
+        setScore(0);
+        setCombo(0);
+        setCurrentIdx(0);
+        setGameState('playing');
+      };
+
+      const handleAnswer = (selected, correct) => {
+        const isCorrect = cleanArabicText(selected) === cleanArabicText(correct);
+        if (isCorrect) {
+          sfx.playCorrect();
+          setAnswerFeedback('correct');
+          setCombo(prev => prev + 1);
+          setScore(prev => prev + 100);
+          speakText(lang === 'ar' ? "مُمْتَاز! إِجَابَةٌ صَحِيحَةٌ" : "Maa Syaa Allah, tepat sekali!");
+        } else {
+          sfx.playWrong();
+          setAnswerFeedback('wrong');
+          setCombo(0);
+          speakText(lang === 'ar' ? "بِسْمِ اللهِ، حَاوِلْ مَرَّةً أُخْرَى" : "Bismillah, ayo coba lagi!");
+        }
+
+        setTimeout(() => {
+          setAnswerFeedback(null);
+          if (currentIdx + 1 < activeSessionQuestions.length) {
+            setCurrentIdx(prev => prev + 1);
+          } else {
+            setGameState('victory');
+          }
+        }, 1200);
+      };
+
+      return (
+        <div className="min-h-screen flex flex-col justify-between p-4 max-w-4xl mx-auto">
+          {/* HEADER */}
+          <header className="flex justify-between items-center p-4 bg-slate-900/80 border border-slate-800 rounded-2xl backdrop-blur-md">
+            <h1 className="text-xl font-black bg-gradient-to-r from-cyan-400 to-pink-400 bg-clip-text text-transparent">
+              EDU-ARCADE PRO
+            </h1>
+            <button 
+              onClick={() => setVoiceEnabled(!voiceEnabled)}
+              className={`px-3 py-1.5 rounded-xl border text-xs font-bold ${voiceEnabled ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300' : 'bg-rose-500/20 border-rose-400 text-rose-300'}`}
+            >
+              {voiceEnabled ? '🔊 Voice ON' : '🔇 Voice OFF'}
+            </button>
+          </header>
+
+          {/* SETUP SCREEN */}
+          {gameState === 'setup' && (
+            <div className="my-auto space-y-6 bg-slate-900/60 p-6 rounded-3xl border border-slate-800">
+              <h2 className="text-2xl font-black text-center text-white">Pengaturan Kuis</h2>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-400 block">Tingkat Kesulitan:</label>
+                  <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs">
+                    <option value="easy">Mudah (Easy)</option>
+                    <option value="medium">Sedang (Medium)</option>
+                    <option value="hard">Sulit (Hard)</option>
+                    <option value="mix">Campuran (Mixed)</option>
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-400 block">Jumlah Soal:</label>
+                  <input 
+                    type="number" 
+                    value={questionLimit} 
+                    onChange={(e) => setQuestionLimit(parseInt(e.target.value) || 1)} 
+                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs font-bold"
+                  />
+                </div>
+              </div>
+
+              {/* UPLOAD PDF SECTION */}
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-3">
+                <p className="text-xs text-slate-400">Unggah berkas PDF materi (Bahasa Indonesia / Arab Berharakat):</p>
+                <label className="inline-block px-4 py-2 bg-gradient-to-r from-rose-600 to-cyan-600 rounded-xl text-xs font-bold cursor-pointer">
+                  {isParsingPdf || isAiProcessing ? '🤖 AI Sedang Mengolah PDF...' : '📄 Pilih File PDF'}
+                  <input type="file" accept=".pdf" onChange={handlePdfUpload} disabled={isParsingPdf || isAiProcessing} className="hidden" />
+                </label>
+                {jsonError && <p className="text-xs text-rose-400">{jsonError}</p>}
+              </div>
+
+              <button 
+                onClick={startGame}
+                className="w-full py-4 rounded-2xl bg-gradient-to-r from-cyan-500 to-purple-600 font-black text-lg text-white shadow-xl hover:scale-105 transition-all"
+              >
+                MULAI PERMAINAN
+              </button>
+            </div>
+          )}
+
+          {/* PLAYING SCREEN */}
+          {gameState === 'playing' && (
+            <div className="my-auto space-y-4 w-full">
+              <div className="flex justify-between items-center px-4 py-2 bg-slate-900 rounded-xl">
+                <span className="text-xs text-slate-400">SKOR: <strong className="text-amber-400 text-base">{score}</strong></span>
+                <span className="text-xs text-cyan-300 font-bold">{currentIdx + 1} / {activeSessionQuestions.length}</span>
+              </div>
+
+              <div className={`p-6 min-h-[350px] rounded-3xl bg-slate-950 border-2 flex flex-col justify-between relative ${
+                answerFeedback === 'correct' ? 'border-emerald-500' :
+                answerFeedback === 'wrong' ? 'border-rose-500 animate-shake' : 'border-slate-800'
+              }`}>
+                {/* QUESTION */}
+                <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 text-center">
+                  <h3 className={`text-xl md:text-3xl font-extrabold text-white ${containsArabic(activeSessionQuestions[currentIdx]?.q) ? 'arabic-text leading-[2.5]' : ''}`}>
+                    {activeSessionQuestions[currentIdx]?.q}
+                  </h3>
+                </div>
+
+                {/* OPTIONS */}
+                <div className="grid grid-cols-2 gap-3 mt-4">
+                  {activeSessionQuestions[currentIdx]?.options?.map((opt, idx) => (
+                    <button
+                      key={idx}
+                      disabled={!!answerFeedback}
+                      onClick={() => handleAnswer(opt, activeSessionQuestions[currentIdx].answer)}
+                      className={`p-4 rounded-xl bg-slate-900 border border-cyan-500/40 hover:border-cyan-400 text-white font-bold text-sm ${containsArabic(opt) ? 'arabic-text text-lg' : ''}`}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* VICTORY SCREEN */}
+          {gameState === 'victory' && (
+            <div className="my-auto text-center space-y-4 p-8 bg-slate-900 rounded-3xl border border-amber-500/40">
+              <h2 className="text-3xl font-black text-amber-400">PERMAINAN SELESAI!</h2>
+              <p className="text-xl font-bold">Total Skor: {score}</p>
+              <button onClick={() => setGameState('setup')} className="px-6 py-2.5 bg-slate-800 rounded-xl font-bold text-xs">
+                Kembali ke Menu
+              </button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
